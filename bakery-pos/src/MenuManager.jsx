@@ -129,7 +129,7 @@ export default function MenuManager() {
               <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:10 }}>
                 <div>
                   <label style={{ fontWeight:700, fontSize:"0.75rem", color:C.brown, textTransform:"uppercase", letterSpacing:1 }}>Price *</label>
-                  <input type="number" min="0" step="0.01" value={form.price} onChange={e => setForm(p => ({...p, price:e.target.value}))} style={inp({ marginTop:5 })} />
+                  <input type="text" inputMode="decimal" placeholder="e.g. 18.00" value={form.price} onChange={e => setForm(p => ({...p, price:e.target.value}))} style={inp({ marginTop:5 })} />
                 </div>
                 <div>
                   <label style={{ fontWeight:700, fontSize:"0.75rem", color:C.brown, textTransform:"uppercase", letterSpacing:1 }}>Sort Order</label>
