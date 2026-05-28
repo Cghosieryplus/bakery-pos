@@ -1,5 +1,6 @@
 import { useState, useEffect, useCallback, useRef } from "react";
 import { loadState, saveState } from "./supabase";
+import MenuManager from "./MenuManager.jsx";
 
 const ITEMS = [
   { id: "bg_regular", name: "Big Regular",   price: 18,   cat: "Big",   desc: "" },
@@ -307,11 +308,14 @@ export default function App() {
           </div>
         </div>}
 
+        {/* ── MENU MANAGER ── */}
+        {screen === "menu" && <div style={card()}><div style={ph}><span>🗂</span> Menu Manager</div><MenuManager /></div>}
+
       </div>
 
       {/* Bottom Nav */}
       <nav style={{ position: "fixed", bottom: 0, left: 0, right: 0, background: C.brown, borderTop: `3px solid ${C.gold}`, display: "flex", zIndex: 200 }}>
-        {[{ id: "order", icon: "🛒", label: "Order", b: 0 }, { id: "orders", icon: "📋", label: "Orders", b: unpaid.length }, { id: "bake", icon: "🔥", label: "Bake", b: mke.length }, { id: "stock", icon: "📦", label: "Stock", b: 0 }, { id: "report", icon: "📊", label: "Report", b: 0 }].map(t => <button key={t.id} onClick={() => setScreen(t.id)} style={{ flex: 1, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", padding: "8px 2px 7px", background: "none", border: "none", cursor: "pointer", color: screen === t.id ? C.gold : "rgba(232,213,176,.5)", position: "relative", gap: 2, borderTop: screen === t.id ? `2px solid ${C.gold}` : "2px solid transparent" }}>
+        {[{ id: "order", icon: "🛒", label: "Order", b: 0 }, { id: "orders", icon: "📋", label: "Orders", b: unpaid.length }, { id: "bake", icon: "🔥", label: "Bake", b: mke.length }, { id: "stock", icon: "📦", label: "Stock", b: 0 }, { id: "report", icon: "📊", label: "Report", b: 0 }, { id: "menu", icon: "🗂", label: "Menu", b: 0 }].map(t => <button key={t.id} onClick={() => setScreen(t.id)} style={{ flex: 1, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", padding: "8px 2px 7px", background: "none", border: "none", cursor: "pointer", color: screen === t.id ? C.gold : "rgba(232,213,176,.5)", position: "relative", gap: 2, borderTop: screen === t.id ? `2px solid ${C.gold}` : "2px solid transparent" }}>
           <span style={{ fontSize: "1.3rem", lineHeight: 1 }}>{t.icon}</span>
           <span style={{ fontSize: "0.58rem", fontWeight: 700, letterSpacing: .5, textTransform: "uppercase" }}>{t.label}</span>
           {t.b > 0 && <span style={{ position: "absolute", top: 4, right: "calc(50% - 20px)", background: C.red, color: "white", fontSize: "0.52rem", fontWeight: 900, padding: "1px 5px", borderRadius: 20, minWidth: 15, textAlign: "center" }}>{t.b}</span>}
