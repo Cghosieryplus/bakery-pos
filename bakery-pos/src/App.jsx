@@ -332,6 +332,28 @@ export default function App() {
   };
   const adjStock = (id,d) => { upd(s=>{s.stock[id]=Math.max(0,(s.stock[id]||0)+d);return s;}); };
 
+  const deleteItem = (it) => {
+    setConfirm({
+      title: `🗑 Delete "${it.name}"?`,
+      msg: `This will permanently remove ${it.name} from your menu and hide it from the storefront. Any existing orders with this item are not affected.`,
+      confirmColor: C.red,
+      confirmLabel: "Delete Item",
+      onConfirm: async () => {
+        // Mark hidden in Supabase (soft delete keeps history intact)
+        await supabase.from("menu_items").update({ hidden: true }).eq("id", it.id);
+        // Remove from local items list
+        setItems(prev => prev.filter(x => x.id !== it.id));
+        // Clean up stock/makeList state
+        upd(s => {
+          delete s.stock[it.id];
+          delete s.makeList[it.id];
+          return s;
+        });
+        toast2(`${it.name} removed`, "success");
+      }
+    });
+  };
+
   // ── New Week ──────────────────────────────────────────────────────────────
   const startNewWeek = () => setConfirm({ title:"🗓 Start New Week?", confirmColor:C.charity, confirmLabel:"Start New Week", msg:"Clears paid & picked-up orders. Unpaid orders carry over. Stock & make list stay.", onConfirm:()=>{
     upd(s=>{
@@ -602,7 +624,10 @@ export default function App() {
                                 <div style={{fontWeight:700,fontSize:"0.9rem",color:C.brown,textTransform:"uppercase",letterSpacing:1}}>{it.name}</div>
                                 {it.description&&<div style={{fontSize:"0.72rem",color:"#bbb"}}>{it.description}</div>}
                               </div>
-                              <div style={{fontFamily:"Georgia,serif",fontSize:"0.85rem",color:"#888"}}>${parseFloat(it.price).toFixed(2)}</div>
+                              <div style={{display:"flex",alignItems:"center",gap:8}}>
+                                <div style={{fontFamily:"Georgia,serif",fontSize:"0.85rem",color:"#888"}}>${parseFloat(it.price).toFixed(2)}</div>
+                                <button onClick={()=>deleteItem(it)} title="Delete item" style={{width:26,height:26,borderRadius:"50%",border:`1.5px solid ${C.red}`,background:"transparent",color:C.red,fontSize:"0.8rem",cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",opacity:0.7,flexShrink:0}}>🗑</button>
+                              </div>
                             </div>
 
                             {/* Two-column: In Stock | Still To Make */}
