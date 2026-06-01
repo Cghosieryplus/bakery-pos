@@ -132,7 +132,10 @@ export default function Order() {
     const stock     = s.stock     || {};
     const makeList  = s.makeList  || {};
     const weeklyData= s.weeklyData|| {};
-    const wk        = s.currentWeekKey || new Date().toISOString().split("T")[0];
+    // Use local date for week key fallback to avoid UTC offset issues
+    const _now=new Date();_now.setDate(_now.getDate()-_now.getDay());
+    const _y=_now.getFullYear(),_m=String(_now.getMonth()+1).padStart(2,"0"),_d=String(_now.getDate()).padStart(2,"0");
+    const wk = s.currentWeekKey || `${_y}-${_m}-${_d}`;
 
     const items = {};
     menuItems.forEach(it => { if (qtys[it.id]) items[it.id] = qtys[it.id]; });
@@ -335,11 +338,9 @@ export default function Order() {
                           {/* Availability label */}
                           {soldOut
                             ? <div style={{ fontSize:"0.72rem", fontWeight:700, color:C.red, marginTop:2 }}>Sold out</div>
-                            : orderWindow.preOrderOpen
-                              ? available > 0
-                                ? <div style={{ fontSize:"0.72rem", color:C.green, marginTop:2, fontWeight:600 }}>✓ In stock · pre-order open</div>
-                                : <div style={{ fontSize:"0.72rem", color:"#aaa", marginTop:2 }}>Pre-order — baked fresh for you</div>
-                              : <div style={{ fontSize:"0.72rem", color:C.green, marginTop:2, fontWeight:600 }}>{available} available</div>
+                            : !orderWindow.preOrderOpen
+                              ? <div style={{ fontSize:"0.72rem", color:C.green, marginTop:2, fontWeight:600 }}>{available} available</div>
+                              : null
                           }
                         </div>
                         {soldOut

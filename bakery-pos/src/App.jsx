@@ -33,7 +33,15 @@ function isChallah(it) {
 }
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
-function getWeekKey(date=new Date()){const d=new Date(date);d.setHours(0,0,0,0);d.setDate(d.getDate()-d.getDay());return d.toISOString().split("T")[0];}
+function getWeekKey(date=new Date()){
+  // Use local date parts to avoid UTC offset shifting the day
+  const d=new Date(date);
+  d.setDate(d.getDate()-d.getDay()); // back to Sunday
+  const y=d.getFullYear();
+  const m=String(d.getMonth()+1).padStart(2,"0");
+  const day=String(d.getDate()).padStart(2,"0");
+  return `${y}-${m}-${day}`;
+}
 function weekLabel(key){const d=new Date(key+"T00:00:00");const e=new Date(d);e.setDate(d.getDate()+6);const f=x=>x.toLocaleDateString("en-US",{month:"short",day:"numeric"});return `${f(d)} – ${f(e)}`;}
 
 const row=(x={})=>({display:"flex",alignItems:"center",gap:10,...x});
