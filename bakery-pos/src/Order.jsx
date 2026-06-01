@@ -9,6 +9,38 @@ const C = {
 const btn = (bg, color, x={}) => ({ padding:"11px 18px", background:bg, color, border:"none", borderRadius:9, fontWeight:700, fontSize:"0.9rem", cursor:"pointer", ...x });
 const inp = (x={}) => ({ padding:"11px 13px", border:`1.5px solid ${C.soft}`, borderRadius:9, fontSize:"1rem", background:"white", color:C.dark, width:"100%", boxSizing:"border-box", fontFamily:"inherit", ...x });
 
+// ── Order window logic ────────────────────────────────────────────────────────
+// Pre-order window: Sunday 12:00am → Thursday 12:00pm EST
+// After Thursday noon: only items with stock > 0 can be ordered
+// Friday & Saturday: fully closed (no pre-orders, stock-only)
+//
+// Returns: { preOrderOpen: bool, stockOnlyMode: bool, closed: bool, nextOpenMsg: string }
+function getOrderWindowStatus() {
+  // Get current time in EST (UTC-5) / EDT (UTC-4)
+  // Use Intl to get the correct offset regardless of server timezone
+  const now = new Date();
+  const estStr = now.toLocaleString("en-US", { timeZone: "America/New_York" });
+  const estDate = new Date(estStr);
+  const day  = estDate.getDay();    // 0=Sun,1=Mon,2=Tue,3=Wed,4=Thu,5=Fri,6=Sat
+  const hour = estDate.getHours();  // 0-23
+  const min  = estDate.getMinutes();
+
+  // Pre-order open: Sun(0) through Thu(4) before noon
+  const beforeThursdayNoon = day < 4 || (day === 4 && (hour < 12 || (hour === 12 && min === 0)));
+  const isFriOrSat = day === 5 || day === 6;
+  const isThursdayAfternoon = day === 4 && (hour > 12 || (hour === 12 && min > 0));
+
+  if (beforeThursdayNoon) {
+    return { preOrderOpen: true, stockOnlyMode: false, closed: false, nextOpenMsg: "" };
+  }
+  if (isThursdayAfternoon || isFriOrSat) {
+    // Stock-only mode: can still order if stock > 0, no pre-orders
+    return { preOrderOpen: false, stockOnlyMode: true, closed: false, nextOpenMsg: "Pre-orders reopen Sunday" };
+  }
+  // Shouldn't reach here, but default safe
+  return { preOrderOpen: true, stockOnlyMode: false, closed: false, nextOpenMsg: "" };
+}
+
 function QC({ value, max, onChange }) {
   const qb = { width:34, height:34, borderRadius:"50%", border:`1.5px solid ${C.gold}`, background:"white", color:C.gold, fontSize:"1.2rem", fontWeight:700, cursor:"pointer", display:"flex", alignItems:"center", justifyContent:"center", flexShrink:0 };
   const canAdd = max === undefined ? true : value < max;
@@ -27,19 +59,21 @@ function QC({ value, max, onChange }) {
 
 export default function Order() {
   const [menuItems, setMenuItems] = useState([]);
-  const [stockMap, setStockMap]   = useState({});  // item_id -> available qty in stock
+  const [stockMap, setStockMap]   = useState({});
   const [qtys, setQtys]           = useState({});
   const [name, setName]           = useState("");
   const [phone, setPhone]         = useState("");
   const [note, setNote]           = useState("");
-  const [screen, setScreen]       = useState("menu"); // menu | review | done
+  const [screen, setScreen]       = useState("menu");
   const [loading, setLoading]     = useState(true);
   const [submitting, setSubmitting] = useState(false);
   const [imgUrls, setImgUrls]     = useState({});
 
+  // Computed once on render (re-evaluates on every render which is fine — no side effects)
+  const orderWindow = getOrderWindowStatus();
+
   useEffect(() => {
     const init = async () => {
-      // Load menu items
       const { data: itemData } = await supabase
         .from("menu_items")
         .select("*")
@@ -47,7 +81,6 @@ export default function Order() {
         .order("sort_order")
         .order("created_at");
 
-      // Load current stock from app_state
       const { data: stateRow } = await supabase
         .from("app_state")
         .select("data")
@@ -67,7 +100,6 @@ export default function Order() {
         setQtys(q);
         setStockMap(sm);
 
-        // Build image URLs
         itemData.forEach(async it => {
           if (it.image_path) {
             const { data: url } = supabase.storage.from("item-images").getPublicUrl(it.image_path);
@@ -85,14 +117,10 @@ export default function Order() {
   const cartCount = Object.values(qtys).reduce((s, v) => s + v, 0);
   const cartItems = menuItems.filter(it => (qtys[it.id] || 0) > 0);
 
-  // Check if any item exceeds stock
-  const hasOutOfStock = menuItems.some(it => stockMap[it.id] === 0 && (qtys[it.id] || 0) > 0);
-
   const submit = async () => {
     if (!name.trim()) return;
     setSubmitting(true);
 
-    // Re-fetch state fresh to avoid race conditions
     const { data: stateRow } = await supabase
       .from("app_state")
       .select("data")
@@ -106,11 +134,9 @@ export default function Order() {
     const weeklyData= s.weeklyData|| {};
     const wk        = s.currentWeekKey || new Date().toISOString().split("T")[0];
 
-    // Build items map — only items with qty > 0
     const items = {};
     menuItems.forEach(it => { if (qtys[it.id]) items[it.id] = qtys[it.id]; });
 
-    // Deduct from stock / add to makeList as needed
     menuItems.forEach(it => {
       const want = qtys[it.id] || 0; if (!want) return;
       const cur   = stock[it.id] || 0;
@@ -123,22 +149,16 @@ export default function Order() {
       }
     });
 
-    // Build order object — online orders are unpaid (pay at pickup)
     const order = {
       id: Date.now().toString(),
       customer: name.trim() + (phone.trim() ? ` (${phone.trim()})` : ""),
-      items,
-      total,
-      paid: 0,
-      paidFull: false,
-      exempt: false,
-      pickedUp: false,
+      items, total,
+      paid: 0, paidFull: false, exempt: false, pickedUp: false,
       note: note.trim() || "",
       online: true,
       ts: new Date().toISOString(),
     };
 
-    // Update weekly sold counts (but NOT revenue — unpaid)
     if (!weeklyData[wk]) weeklyData[wk] = { sold: {}, revenue: 0, charityDonated: 0 };
     menuItems.forEach(it => {
       weeklyData[wk].sold[it.id] = (weeklyData[wk].sold[it.id] || 0) + (qtys[it.id] || 0);
@@ -207,7 +227,6 @@ export default function Order() {
         </div>
       </div>
       <div style={{ padding:"20px 18px", display:"flex", flexDirection:"column", gap:14, maxWidth:520, margin:"0 auto" }}>
-        {/* Items summary */}
         <div style={{ background:"white", borderRadius:12, padding:"16px 18px", border:`1px solid ${C.soft}` }}>
           <div style={{ fontFamily:"Georgia,serif", color:C.brown, fontSize:"1rem", marginBottom:12 }}>Your items</div>
           {cartItems.map(it => (
@@ -228,7 +247,6 @@ export default function Order() {
           </div>
         </div>
 
-        {/* Customer details */}
         <div style={{ background:"white", borderRadius:12, padding:"16px 18px", border:`1px solid ${C.soft}`, display:"flex", flexDirection:"column", gap:11 }}>
           <div style={{ fontFamily:"Georgia,serif", color:C.brown, fontSize:"1rem", marginBottom:4 }}>Your details</div>
           <div>
@@ -263,7 +281,9 @@ export default function Order() {
       <div style={{ background:C.brown, padding:"16px 20px", display:"flex", justifyContent:"space-between", alignItems:"center" }}>
         <div>
           <div style={{ fontFamily:"Georgia,serif", color:C.gold, fontSize:"1.3rem" }}>🥐 Crumb & Culture</div>
-          <div style={{ color:"rgba(232,213,176,.7)", fontSize:"0.75rem" }}>Weekly pre-order · Pay at pickup</div>
+          <div style={{ color:"rgba(232,213,176,.7)", fontSize:"0.75rem" }}>
+            {orderWindow.preOrderOpen ? "Weekly pre-order · Pay at pickup" : "Available now · Pay at pickup"}
+          </div>
         </div>
         {cartCount > 0 && (
           <div style={{ background:C.gold, color:"white", borderRadius:20, padding:"4px 12px", fontSize:"0.82rem", fontWeight:700 }}>
@@ -271,6 +291,17 @@ export default function Order() {
           </div>
         )}
       </div>
+
+      {/* Order window banner */}
+      {orderWindow.stockOnlyMode && (
+        <div style={{ background:"#fff8e8", borderBottom:`2px solid ${C.gold}`, padding:"10px 18px", display:"flex", alignItems:"center", gap:10 }}>
+          <span style={{ fontSize:"1.1rem" }}>🕐</span>
+          <div>
+            <div style={{ fontWeight:700, fontSize:"0.85rem", color:C.brown }}>Pre-orders are closed for this week</div>
+            <div style={{ fontSize:"0.75rem", color:"#888" }}>Pre-orders open Sunday–Thursday 12pm EST. Items shown below are still available while supplies last.</div>
+          </div>
+        </div>
+      )}
 
       <div style={{ padding:"16px 16px", maxWidth:560, margin:"0 auto", display:"flex", flexDirection:"column", gap:20 }}>
         {cats.map(cat => {
@@ -282,13 +313,17 @@ export default function Order() {
               </div>
               <div style={{ display:"flex", flexDirection:"column", gap:12 }}>
                 {catItems.map(it => {
-                  const available = stockMap[it.id] || 0;
-                  const qty       = qtys[it.id] || 0;
-                  const outOfStock = available === 0;
+                  const available  = stockMap[it.id] || 0;
+                  const qty        = qtys[it.id] || 0;
+                  // During pre-order window: no stock limit. After Thursday noon: must have stock.
+                  const canOrder   = orderWindow.preOrderOpen || available > 0;
+                  const maxQty     = orderWindow.preOrderOpen ? undefined : available; // undefined = no cap
+                  const soldOut    = !canOrder;
+
                   return (
-                    <div key={it.id} style={{ background:"white", borderRadius:12, border:`1px solid ${outOfStock ? "#e0c0c0" : C.soft}`, overflow:"hidden", display:"flex", gap:0, opacity: outOfStock ? 0.7 : 1 }}>
+                    <div key={it.id} style={{ background:"white", borderRadius:12, border:`1px solid ${soldOut ? "#e0c0c0" : C.soft}`, overflow:"hidden", display:"flex", opacity: soldOut ? 0.65 : 1 }}>
                       {imgUrls[it.id] ? (
-                        <img src={imgUrls[it.id]} alt={it.name} style={{ width:100, height:100, objectFit:"cover", flexShrink:0, filter: outOfStock ? "grayscale(60%)" : "none" }} />
+                        <img src={imgUrls[it.id]} alt={it.name} style={{ width:100, height:100, objectFit:"cover", flexShrink:0, filter: soldOut ? "grayscale(60%)" : "none" }} />
                       ) : (
                         <div style={{ width:100, height:100, background:C.warm, flexShrink:0, display:"flex", alignItems:"center", justifyContent:"center", fontSize:"2rem" }}>🍞</div>
                       )}
@@ -297,15 +332,19 @@ export default function Order() {
                           <div style={{ fontWeight:700, fontSize:"0.9rem", color:C.dark, textTransform:"uppercase", letterSpacing:0.5 }}>{it.name}</div>
                           {it.description && <div style={{ fontSize:"0.75rem", color:"#aaa", marginTop:2 }}>{it.description}</div>}
                           <div style={{ fontFamily:"Georgia,serif", fontSize:"1.05rem", fontWeight:700, color:C.gold, marginTop:4 }}>${parseFloat(it.price).toFixed(2)}</div>
-                          {/* Stock badge */}
-                          {outOfStock
+                          {/* Availability label */}
+                          {soldOut
                             ? <div style={{ fontSize:"0.72rem", fontWeight:700, color:C.red, marginTop:2 }}>Sold out</div>
-                            : <div style={{ fontSize:"0.72rem", color:"#aaa", marginTop:2 }}>{available} available</div>
+                            : orderWindow.preOrderOpen
+                              ? available > 0
+                                ? <div style={{ fontSize:"0.72rem", color:C.green, marginTop:2, fontWeight:600 }}>✓ In stock · pre-order open</div>
+                                : <div style={{ fontSize:"0.72rem", color:"#aaa", marginTop:2 }}>Pre-order — baked fresh for you</div>
+                              : <div style={{ fontSize:"0.72rem", color:C.green, marginTop:2, fontWeight:600 }}>{available} available</div>
                           }
                         </div>
-                        {outOfStock
-                          ? <div style={{ fontSize:"0.8rem", color:C.red, fontWeight:700, padding:"6px 0" }}>Currently unavailable</div>
-                          : <QC value={qty} max={available} onChange={v => setQtys(p => ({ ...p, [it.id]: v }))} />
+                        {soldOut
+                          ? <div style={{ fontSize:"0.8rem", color:C.red, fontWeight:700, padding:"6px 0" }}>Not available this week</div>
+                          : <QC value={qty} max={maxQty} onChange={v => setQtys(p => ({ ...p, [it.id]: v }))} />
                         }
                       </div>
                     </div>
