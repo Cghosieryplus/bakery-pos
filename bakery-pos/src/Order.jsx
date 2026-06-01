@@ -10,8 +10,8 @@ const btn = (bg, color, x={}) => ({ padding:"11px 18px", background:bg, color, b
 const inp = (x={}) => ({ padding:"11px 13px", border:`1.5px solid ${C.soft}`, borderRadius:9, fontSize:"1rem", background:"white", color:C.dark, width:"100%", boxSizing:"border-box", fontFamily:"inherit", ...x });
 
 // ── Order window logic ────────────────────────────────────────────────────────
-// Pre-order window: Sunday 12:00am → Thursday 12:00pm EST
-// After Thursday noon: only items with stock > 0 can be ordered
+// Pre-order window: Sunday 12:00am → Wednesday 6:00pm EST
+// After Wednesday 6pm: only items with stock > 0 can be ordered
 // Friday & Saturday: fully closed (no pre-orders, stock-only)
 //
 // Returns: { preOrderOpen: bool, stockOnlyMode: bool, closed: bool, nextOpenMsg: string }
@@ -25,15 +25,14 @@ function getOrderWindowStatus() {
   const hour = estDate.getHours();  // 0-23
   const min  = estDate.getMinutes();
 
-  // Pre-order open: Sun(0) through Thu(4) before noon
-  const beforeThursdayNoon = day < 4 || (day === 4 && (hour < 12 || (hour === 12 && min === 0)));
-  const isFriOrSat = day === 5 || day === 6;
-  const isThursdayAfternoon = day === 4 && (hour > 12 || (hour === 12 && min > 0));
+  // Pre-order open: Sun(0) through Wed(3) before 6pm, or Wed exactly at 18:00
+  const beforeWednesday6pm = day < 3 || (day === 3 && hour < 18);
+  const isAfterCutoff = day > 3 || (day === 3 && hour >= 18);
 
-  if (beforeThursdayNoon) {
+  if (beforeWednesday6pm) {
     return { preOrderOpen: true, stockOnlyMode: false, closed: false, nextOpenMsg: "" };
   }
-  if (isThursdayAfternoon || isFriOrSat) {
+  if (isAfterCutoff) {
     // Stock-only mode: can still order if stock > 0, no pre-orders
     return { preOrderOpen: false, stockOnlyMode: true, closed: false, nextOpenMsg: "Pre-orders reopen Sunday" };
   }
@@ -61,7 +60,8 @@ export default function Order() {
   const [menuItems, setMenuItems] = useState([]);
   const [stockMap, setStockMap]   = useState({});
   const [qtys, setQtys]           = useState({});
-  const [name, setName]           = useState("");
+  const [firstName, setFirstName] = useState("");
+  const [lastName, setLastName]   = useState("");
   const [phone, setPhone]         = useState("");
   const [note, setNote]           = useState("");
   const [screen, setScreen]       = useState("menu");
@@ -118,7 +118,7 @@ export default function Order() {
   const cartItems = menuItems.filter(it => (qtys[it.id] || 0) > 0);
 
   const submit = async () => {
-    if (!name.trim()) return;
+    if (!firstName.trim() || !lastName.trim()) return;
     setSubmitting(true);
 
     const { data: stateRow } = await supabase
@@ -154,7 +154,7 @@ export default function Order() {
 
     const order = {
       id: Date.now().toString(),
-      customer: name.trim() + (phone.trim() ? ` (${phone.trim()})` : ""),
+      customer: `${firstName.trim()} ${lastName.trim()}`.trim() + (phone.trim() ? ` (${phone.trim()})` : ""),
       items, total,
       paid: 0, paidFull: false, exempt: false, pickedUp: false,
       note: note.trim() || "",
@@ -190,7 +190,7 @@ export default function Order() {
         <div style={{ fontSize:"3rem", marginBottom:12 }}>🎉</div>
         <div style={{ fontFamily:"Georgia,serif", fontSize:"1.5rem", color:C.brown, marginBottom:8 }}>Order placed!</div>
         <div style={{ color:"#666", fontSize:"0.95rem", lineHeight:1.6, marginBottom:24 }}>
-          Thanks {name}! Your order is confirmed. We'll have it ready for pickup.
+          Thanks {firstName}! Your order is confirmed. We'll have it ready for pickup.
           Your total of <strong style={{ color:C.brown }}>${total.toFixed(2)}</strong> is due at pickup.
         </div>
         <div style={{ background:C.warm, borderRadius:10, padding:"14px 16px", marginBottom:20, textAlign:"left" }}>
@@ -209,7 +209,7 @@ export default function Order() {
           onClick={() => {
             setScreen("menu");
             setQtys(Object.fromEntries(menuItems.map(i => [i.id, 0])));
-            setName(""); setPhone(""); setNote("");
+            setFirstName(""); setLastName(""); setPhone(""); setNote("");
           }}
           style={btn(C.brown, C.cream, { width:"100%" })}
         >
@@ -250,11 +250,28 @@ export default function Order() {
           </div>
         </div>
 
+        {/* Zelle payment card */}
+        <div style={{ background:"white", borderRadius:12, padding:"14px 18px", border:`1px solid #d4b8f0`, display:"flex", alignItems:"center", gap:14 }}>
+          <div style={{ width:40, height:40, borderRadius:"50%", background:"#6C3CF7", display:"flex", alignItems:"center", justifyContent:"center", flexShrink:0 }}>
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="M5 12h14M12 5l7 7-7 7" stroke="white" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/></svg>
+          </div>
+          <div>
+            <div style={{ fontWeight:700, fontSize:"0.88rem", color:C.dark, marginBottom:2 }}>Pay via Zelle</div>
+            <div style={{ fontSize:"0.82rem", color:"#666" }}>Send payment to <span style={{ fontWeight:700, color:"#6C3CF7" }}>fishelsteinberg@gmail.com</span></div>
+          </div>
+        </div>
+
         <div style={{ background:"white", borderRadius:12, padding:"16px 18px", border:`1px solid ${C.soft}`, display:"flex", flexDirection:"column", gap:11 }}>
           <div style={{ fontFamily:"Georgia,serif", color:C.brown, fontSize:"1rem", marginBottom:4 }}>Your details</div>
-          <div>
-            <label style={{ fontWeight:700, fontSize:"0.78rem", color:C.brown, textTransform:"uppercase", letterSpacing:1 }}>Name *</label>
-            <input value={name} onChange={e => setName(e.target.value)} placeholder="Your full name" style={inp({ marginTop:5 })} />
+          <div style={{ display:"flex", flexDirection:"column", gap:8 }}>
+            <div>
+              <label style={{ fontWeight:700, fontSize:"0.78rem", color:C.brown, textTransform:"uppercase", letterSpacing:1 }}>First Name *</label>
+              <input value={firstName} onChange={e => setFirstName(e.target.value)} placeholder="First name" style={inp({ marginTop:5 })} />
+            </div>
+            <div>
+              <label style={{ fontWeight:700, fontSize:"0.78rem", color:C.brown, textTransform:"uppercase", letterSpacing:1 }}>Last Name *</label>
+              <input value={lastName} onChange={e => setLastName(e.target.value)} placeholder="Last name" style={inp({ marginTop:5 })} />
+            </div>
           </div>
           <div>
             <label style={{ fontWeight:700, fontSize:"0.78rem", color:C.brown, textTransform:"uppercase", letterSpacing:1 }}>Phone</label>
@@ -268,8 +285,8 @@ export default function Order() {
 
         <button
           onClick={submit}
-          disabled={!name.trim() || submitting}
-          style={btn(name.trim() ? C.brown : "#ccc", "white", { width:"100%", padding:14, fontSize:"1rem", opacity: submitting ? 0.7 : 1 })}
+          disabled={!firstName.trim() || !lastName.trim() || submitting}
+          style={btn(firstName.trim() && lastName.trim() ? C.brown : "#ccc", "white", { width:"100%", padding:14, fontSize:"1rem", opacity: submitting ? 0.7 : 1 })}
         >
           {submitting ? "Placing order…" : `Confirm Order · $${total.toFixed(2)}`}
         </button>
@@ -301,7 +318,7 @@ export default function Order() {
           <span style={{ fontSize:"1.1rem" }}>🕐</span>
           <div>
             <div style={{ fontWeight:700, fontSize:"0.85rem", color:C.brown }}>Pre-orders are closed for this week</div>
-            <div style={{ fontSize:"0.75rem", color:"#888" }}>Pre-orders open Sunday–Thursday 12pm EST. Items shown below are still available while supplies last.</div>
+            <div style={{ fontSize:"0.75rem", color:"#888" }}>Pre-orders open Sunday–Wednesday 6pm EST. Items shown below are still available while supplies last.</div>
           </div>
         </div>
       )}
