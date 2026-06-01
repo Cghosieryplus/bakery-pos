@@ -182,8 +182,20 @@ export default function App() {
   useEffect(() => {
     Promise.all([loadState(), loadItems().then(()=>{})]).then(([remote]) => {
       if (remote) {
-        setSt({ ...DEF, ...remote, stock: { ...(remote.stock || {}) } });
-        if (remote.currentWeekKey) setVw(remote.currentWeekKey);
+        const todayWeek = getWeekKey();
+        // If the stored week key is stale (behind today's week), auto-advance it.
+        // This prevents orders from being recorded in the wrong week after a week boundary.
+        let corrected = { ...DEF, ...remote, stock: { ...(remote.stock || {}) } };
+        if (!corrected.currentWeekKey || corrected.currentWeekKey < todayWeek) {
+          corrected.currentWeekKey = todayWeek;
+          if (!corrected.weeklyData[todayWeek]) {
+            corrected.weeklyData = { ...corrected.weeklyData, [todayWeek]: { sold:{}, revenue:0, charityDonated:0 } };
+          }
+          // Save the corrected key back to Supabase immediately
+          saveState(corrected);
+        }
+        setSt(corrected);
+        setVw(todayWeek);
       }
       setLoading(false);
     }).catch(()=>setLoading(false));
