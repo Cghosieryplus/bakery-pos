@@ -202,10 +202,15 @@ export default function App() {
   const pa    = exempt ? 0 : (paidFull ? ot : parseFloat(amtPaid)||0);
   const bal   = ot - pa;
 
-  // Orders: active = not pickedUp, pickedUp = picked up
-  const activeOrders = st.orders.filter(o => !o.pickedUp);
-  const pickedOrders = st.orders.filter(o => o.pickedUp);
-  const unpaidCount  = activeOrders.filter(o => !o.exempt && !(o.paidFull || o.paid >= o.total)).length;
+  // Orders tabs:
+  // Active   = not picked up (paid or unpaid — still needs to leave)
+  // Unpaid   = picked up but NOT paid (owes money)
+  // Archived = picked up AND paid (or exempt)
+  const isPaid = o => o.exempt || o.paidFull || o.paid >= o.total;
+  const activeOrders   = st.orders.filter(o => !o.pickedUp);
+  const unpaidPickedUp = st.orders.filter(o => o.pickedUp && !isPaid(o));
+  const archivedOrders = st.orders.filter(o => o.pickedUp && isPaid(o));
+  const unpaidCount    = activeOrders.filter(o => !isPaid(o)).length + unpaidPickedUp.length;
   const mke          = Object.entries(st.makeList).filter(([,q])=>q>0);
 
   // Dough pool for challah order entry
@@ -369,11 +374,14 @@ export default function App() {
   }});
 
   // ── Report values ─────────────────────────────────────────────────────────
-  const wd    = st.weeklyData[vw]||{sold:{},revenue:0,charityDonated:0};
-  const rev   = wd.revenue||0;
-  const ctw   = rev*0.1; const co=wd.charityCarriedOver||0; const ct=ctw+co;
+  const wd      = st.weeklyData[vw]||{sold:{},revenue:0,charityDonated:0};
+  const rev     = wd.revenue||0;
+  // All unpaid balance across ALL orders (picked up or not)
+  const amtOwed = st.orders.filter(o=>!o.exempt&&!(o.paidFull||o.paid>=o.total)).reduce((s,o)=>s+(o.total-(o.paid||0)),0);
+  // Charity = 10% of ALL billed (paid + outstanding)
+  const totalBilled = rev + amtOwed;
+  const ctw   = totalBilled*0.1; const co=wd.charityCarriedOver||0; const ct=ctw+co;
   const cd    = wd.charityDonated||0; const cow=Math.max(0,ct-cd);
-  const amtOwed = st.orders.filter(o=>!o.exempt&&!o.pickedUp&&!(o.paidFull||o.paid>=o.total)).reduce((s,o)=>s+(o.total-(o.paid||0)),0);
   const logDon  = () => {
     const amt=parseFloat(don)||0; if(amt<=0){toast2("Enter a donation amount","error");return;}
     upd(s=>{if(!s.weeklyData[vw])s.weeklyData[vw]={sold:{},revenue:0,charityDonated:0};s.weeklyData[vw].charityDonated=(s.weeklyData[vw].charityDonated||0)+amt;return s;});
@@ -484,17 +492,21 @@ export default function App() {
         {screen==="orders" && <div style={card()}>
           <div style={ph}><span>📋</span> Orders <span style={badge}>{unpaidCount} unpaid</span></div>
           <div style={{paddingBottom:16}}>
-            {/* Tabs: Active | Picked Up */}
+            {/* Tabs: Active | Unpaid | Archived */}
             <div style={{display:"flex",borderBottom:`2px solid ${C.soft}`}}>
-              {[{id:"active",l:"🛒 Active",list:activeOrders},{id:"pickedup",l:"📦 Picked Up",list:pickedOrders}].map(t=>(
-                <button key={t.id} onClick={()=>setOrderTab(t.id)} style={{flex:1,padding:"10px 4px",background:"none",border:"none",cursor:"pointer",fontWeight:700,fontSize:"0.72rem",textTransform:"uppercase",letterSpacing:.5,color:orderTab===t.id?C.brown:"#aaa",borderBottom:orderTab===t.id?`3px solid ${C.gold}`:"3px solid transparent",marginBottom:-2}}>
-                  {t.l} <span style={{background:orderTab===t.id?C.gold:C.soft,color:orderTab===t.id?"white":C.brown,borderRadius:20,padding:"1px 7px",fontSize:"0.68rem"}}>{t.list.length}</span>
+              {[
+                {id:"active",   l:"🛒 Active",   list:activeOrders},
+                {id:"unpaid",   l:"⚠️ Unpaid",   list:unpaidPickedUp},
+                {id:"archived", l:"✅ Archived", list:archivedOrders},
+              ].map(t=>(
+                <button key={t.id} onClick={()=>setOrderTab(t.id)} style={{flex:1,padding:"10px 4px",background:"none",border:"none",cursor:"pointer",fontWeight:700,fontSize:"0.62rem",textTransform:"uppercase",letterSpacing:.5,color:orderTab===t.id?C.brown:"#aaa",borderBottom:orderTab===t.id?`3px solid ${C.gold}`:"3px solid transparent",marginBottom:-2}}>
+                  {t.l} <span style={{background:orderTab===t.id?C.gold:C.soft,color:orderTab===t.id?"white":C.brown,borderRadius:20,padding:"1px 6px",fontSize:"0.62rem"}}>{t.list.length}</span>
                 </button>
               ))}
             </div>
 
             <div style={{padding:"14px 16px",...col({gap:10})}}>
-              {(orderTab==="active"?activeOrders:pickedOrders).map(o => {
+              {(orderTab==="active"?activeOrders:orderTab==="unpaid"?unpaidPickedUp:archivedOrders).map(o => {
                 const isPd = o.exempt||o.paidFull||o.paid>=o.total;
                 const status = o.exempt?"exempt":isPd?"paid":o.paid>0?"partial":"unpaid";
                 const sl = o.exempt?"Exempt 🕊":isPd?"Paid ✓":o.paid>0?"Partial":"Unpaid";
@@ -525,14 +537,14 @@ export default function App() {
                         ? <button onClick={()=>markPickedUp(o.id)} style={btn("#1a6fa8","white",{padding:"6px 12px",fontSize:"0.75rem"})}>📦 Picked Up</button>
                         : <button onClick={()=>markPickedUp(o.id)} style={{padding:"6px 12px",background:"transparent",color:"#1a6fa8",border:"1.5px solid #1a6fa8",borderRadius:7,fontWeight:700,fontSize:"0.75rem",cursor:"pointer"}}>Undo Pickup</button>
                       }
-                      {!o.pickedUp&&(!isPd||!o.exempt)&&<button onClick={()=>markPickedUpAndPaid(o.id)} style={btn(C.brown,C.cream,{padding:"6px 12px",fontSize:"0.75rem"})}>✅ Picked Up & Paid</button>}
+                      {!o.pickedUp&&<button onClick={()=>markPickedUpAndPaid(o.id)} style={btn(C.brown,C.cream,{padding:"6px 12px",fontSize:"0.75rem"})}>✅ Picked Up & Paid</button>}
                       <button onClick={()=>openEdit(o.id)} style={btn(C.gold,"white",{padding:"6px 12px",fontSize:"0.75rem"})}>Edit</button>
                       <button onClick={()=>deleteOrder(o.id)} style={{padding:"6px 11px",background:"transparent",color:C.red,border:`1.5px solid ${C.red}`,borderRadius:7,fontWeight:700,fontSize:"0.75rem",cursor:"pointer"}}>Delete</button>
                     </div>
                   </div>
                 );
               })}
-              {(orderTab==="active"?activeOrders:pickedOrders).length===0 && <div style={{textAlign:"center",color:"#bbb",padding:20,fontSize:"0.9rem"}}>No orders here</div>}
+              {(orderTab==="active"?activeOrders:orderTab==="unpaid"?unpaidPickedUp:archivedOrders).length===0 && <div style={{textAlign:"center",color:"#bbb",padding:20,fontSize:"0.9rem"}}>No orders here</div>}
               <div style={{display:"flex",justifyContent:"flex-end",marginTop:4}}>
                 <button onClick={()=>setConfirm({title:"🗑 Clear All Orders",msg:"Delete all orders? This cannot be undone.",confirmColor:C.red,onConfirm:()=>{upd(s=>{s.orders=[];s.makeList={};return s;});toast2("All orders cleared");}})} style={{padding:"6px 14px",background:"transparent",color:C.red,border:`1.5px solid ${C.red}`,borderRadius:7,fontSize:"0.75rem",fontWeight:700,cursor:"pointer",opacity:.7}}>🗑 Clear All Orders</button>
               </div>
@@ -722,7 +734,7 @@ export default function App() {
             </div>
 
             {/* Charity block */}
-            {ct>0&&<div style={{background:"linear-gradient(135deg,#f3eeff 0%,#ede0ff 100%)",border:"2px solid #c4a8e8",borderRadius:12,padding:"16px 18px",...col({gap:12})}}>
+            {(ct>0||totalBilled>0)&&<div style={{background:"linear-gradient(135deg,#f3eeff 0%,#ede0ff 100%)",border:"2px solid #c4a8e8",borderRadius:12,padding:"16px 18px",...col({gap:12})}}>
               <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",flexWrap:"wrap",gap:8}}>
                 <div><div style={{fontFamily:"Georgia,serif",fontWeight:700,fontSize:"0.95rem",color:C.charity,letterSpacing:1}}>🕊 Charity Fund — 10% of Sales</div>{co>0&&<div style={{fontSize:"0.72rem",color:C.charity,fontWeight:700,marginTop:3}}>Includes ${co.toFixed(2)} carried from last week</div>}</div>
                 <div style={{fontFamily:"Georgia,serif",fontSize:"1.7rem",fontWeight:900,color:C.charity}}>${ct.toFixed(2)}</div>
