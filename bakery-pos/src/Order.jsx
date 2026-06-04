@@ -59,6 +59,7 @@ function QC({ value, max, onChange }) {
 export default function Order() {
   const [menuItems, setMenuItems] = useState([]);
   const [stockMap, setStockMap]   = useState({});
+  const [availabilityMap, setAvailabilityMap] = useState({});
   const [qtys, setQtys]           = useState({});
   const [firstName, setFirstName] = useState("");
   const [lastName, setLastName]   = useState("");
@@ -88,17 +89,21 @@ export default function Order() {
         .single();
 
       const stock = stateRow?.data?.stock || {};
+      const availability = stateRow?.data?.availability || {};
 
       if (itemData) {
         setMenuItems(itemData);
         const q = {};
         const sm = {};
+        const am = {};
         itemData.forEach(it => {
           q[it.id] = 0;
           sm[it.id] = Math.max(0, stock[it.id] || 0);
+          am[it.id] = availability[it.id] !== false; // default true
         });
         setQtys(q);
         setStockMap(sm);
+        setAvailabilityMap(am);
 
         itemData.forEach(async it => {
           if (it.image_path) {
@@ -142,14 +147,11 @@ export default function Order() {
 
     menuItems.forEach(it => {
       const want = qtys[it.id] || 0; if (!want) return;
-      const cur   = stock[it.id] || 0;
-      const after = cur - want;
-      if (after < 0) {
-        makeList[it.id] = (makeList[it.id] || 0) + Math.abs(after);
-        stock[it.id] = -makeList[it.id];
-      } else {
-        stock[it.id] = after;
-      }
+      const inStock = Math.max(0, stock[it.id] || 0);
+      const fromStock = Math.min(want, inStock);
+      stock[it.id] = inStock - fromStock;
+      const stillNeeded = want - fromStock;
+      if (stillNeeded > 0) makeList[it.id] = (makeList[it.id] || 0) + stillNeeded;
     });
 
     const order = {
@@ -335,9 +337,11 @@ export default function Order() {
                 {catItems.map(it => {
                   const available  = stockMap[it.id] || 0;
                   const qty        = qtys[it.id] || 0;
-                  // During pre-order window: no stock limit. After Thursday noon: must have stock.
-                  const canOrder   = orderWindow.preOrderOpen || available > 0;
-                  const maxQty     = orderWindow.preOrderOpen ? undefined : available; // undefined = no cap
+                  const isAvail    = availabilityMap[it.id] !== false; // default true
+                  // If admin toggled off: always out of stock on storefront
+                  // During pre-order window: no stock limit. After cutoff: must have stock.
+                  const canOrder   = isAvail && (orderWindow.preOrderOpen || available > 0);
+                  const maxQty     = orderWindow.preOrderOpen ? undefined : available;
                   const soldOut    = !canOrder;
 
                   return (
