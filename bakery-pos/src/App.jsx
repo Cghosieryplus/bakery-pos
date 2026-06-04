@@ -596,9 +596,13 @@ export default function App() {
                           {it.description&&<div style={{fontSize:"0.72rem",color:"#aaa"}}>{it.description}</div>}
                           <div style={{fontSize:"0.72rem",color:"#aaa"}}>needed</div>
                         </div>
-                        <div style={{fontFamily:"Georgia,serif",fontSize:"2.2rem",fontWeight:900,color:C.orange,minWidth:42,textAlign:"center"}}>{qty}</div>
+                        <div style={{display:"flex",alignItems:"center",gap:6}}>
+                          <button style={qb} onClick={()=>upd(s=>{s.makeList[id]=Math.max(0,(s.makeList[id]||0)-1);if(s.makeList[id]<=0)delete s.makeList[id];return s;})}>−</button>
+                          <span style={{fontFamily:"Georgia,serif",fontSize:"2.2rem",fontWeight:900,color:C.orange,minWidth:42,textAlign:"center"}}>{qty}</span>
+                          <button style={qb} onClick={()=>upd(s=>{s.makeList[id]=(s.makeList[id]||0)+1;return s;})}>+</button>
+                        </div>
                         <div style={{display:"flex",flexDirection:"column",alignItems:"center",gap:4}}>
-                          <input type="number" min="1" max={qty} placeholder="qty" value={mi[id]||""} onChange={e=>setMi(p=>({...p,[id]:e.target.value}))} style={{width:60,padding:"5px 8px",border:`1.5px solid ${C.soft}`,borderRadius:6,fontSize:"0.9rem",textAlign:"center",background:"white"}} />
+                          <input type="number" min="1" placeholder="qty" value={mi[id]||""} onChange={e=>setMi(p=>({...p,[id]:e.target.value}))} style={{width:60,padding:"5px 8px",border:`1.5px solid ${C.soft}`,borderRadius:6,fontSize:"0.9rem",textAlign:"center",background:"white"}} />
                           <div style={{fontSize:"0.65rem",color:"#aaa"}}>made</div>
                         </div>
                         <button onClick={()=>markMade(id)} style={btn(C.green,"white",{padding:"7px 13px",fontSize:"0.78rem"})}>Made ✓</button>
