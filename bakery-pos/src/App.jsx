@@ -244,16 +244,15 @@ export default function App() {
       const qtys = { ...fq };
       items.forEach(it => {
         const want = qtys[it.id]||0; if (!want) return;
-        s.makeList[it.id] = (s.makeList[it.id]||0) + want;
+        const cur  = s.stock[it.id]||0;
+        const after = cur - want;
+        if (after < 0) { s.makeList[it.id]=(s.makeList[it.id]||0)+Math.abs(after); s.stock[it.id]=-s.makeList[it.id]; }
+        else { s.stock[it.id]=after; }
       });
       const ap  = exempt ? 0 : (paidFull ? ot : parseFloat(amtPaid)||0);
       const ipf = !exempt && (paidFull || ap >= ot);
       const order = { id:Date.now().toString(), customer:custName.trim(), items:qtys, total:ot, paid:ap, paidFull:ipf, exempt:!!exempt, pickedUp:false, ts:new Date().toISOString() };
       s.orders = [order,...s.orders];
-      const wk = s.currentWeekKey;
-      if (!s.weeklyData[wk]) s.weeklyData[wk]={sold:{},revenue:0,charityDonated:0};
-      items.forEach(it=>{ s.weeklyData[wk].sold[it.id]=(s.weeklyData[wk].sold[it.id]||0)+(qtys[it.id]||0); });
-      if (!exempt && ipf) s.weeklyData[wk].revenue += ot;
       return s;
     });
     setCustName(""); setFq(Object.fromEntries(items.map(i=>[i.id,0]))); setAmtPaid(""); setPaidFull(false); setExempt(false);
@@ -264,11 +263,8 @@ export default function App() {
   const markPaid = id => {
     upd(s => {
       const o = s.orders.find(x=>x.id===id); if (!o) return s;
-      const prev = o.paid||0;
+      const prev = o.paid||0; void prev;
       o.paid = o.total; o.paidFull = true;
-      const wk = s.currentWeekKey;
-      if (!s.weeklyData[wk]) s.weeklyData[wk]={sold:{},revenue:0,charityDonated:0};
-      s.weeklyData[wk].revenue += o.total - prev;
       return s;
     });
     toast2("Marked as paid ✓","success");
@@ -276,43 +272,14 @@ export default function App() {
 
   // ── Mark Picked Up ────────────────────────────────────────────────────────
   const markPickedUp = id => {
-    upd(s => {
-      const o = s.orders.find(x=>x.id===id); if (!o) return s;
-      const pickingUp = !o.pickedUp;
-      o.pickedUp = pickingUp;
-      if (pickingUp) {
-        // Order left — remove from make list
-        items.forEach(it => {
-          const qty = o.items[it.id]||0; if (!qty) return;
-          s.makeList[it.id] = Math.max(0, (s.makeList[it.id]||0) - qty);
-          if (s.makeList[it.id] <= 0) delete s.makeList[it.id];
-        });
-      } else {
-        // Undo pickup — add back to make list
-        items.forEach(it => {
-          const qty = o.items[it.id]||0; if (!qty) return;
-          s.makeList[it.id] = (s.makeList[it.id]||0) + qty;
-        });
-      }
-      return s;
-    });
+    upd(s => { const o=s.orders.find(x=>x.id===id); if(o) o.pickedUp=!o.pickedUp; return s; });
   };
 
   // ── Picked Up & Paid ─────────────────────────────────────────────────────
   const markPickedUpAndPaid = id => {
     upd(s => {
       const o = s.orders.find(x=>x.id===id); if (!o) return s;
-      const prev = o.paid||0;
       o.paid = o.total; o.paidFull = true; o.pickedUp = true;
-      const wk = s.currentWeekKey;
-      if (!s.weeklyData[wk]) s.weeklyData[wk]={sold:{},revenue:0,charityDonated:0};
-      s.weeklyData[wk].revenue += o.total - prev;
-      // Order left — remove from make list
-      items.forEach(it => {
-        const qty = o.items[it.id]||0; if (!qty) return;
-        s.makeList[it.id] = Math.max(0, (s.makeList[it.id]||0) - qty);
-        if (s.makeList[it.id] <= 0) delete s.makeList[it.id];
-      });
       return s;
     });
     toast2("Picked up & paid ✓","success");
@@ -325,12 +292,7 @@ export default function App() {
       upd(s => {
         s.orders = s.orders.filter(x=>x.id!==id);
         const wk = s.currentWeekKey;
-        if (s.weeklyData[wk]) {
-          items.forEach(it=>{ s.weeklyData[wk].sold[it.id]=Math.max(0,(s.weeklyData[wk].sold[it.id]||0)-(o.items[it.id]||0)); });
-          if (!o.exempt && (o.paidFull||o.paid>=o.total)) s.weeklyData[wk].revenue=Math.max(0,(s.weeklyData[wk].revenue||0)-o.total);
-          else if (!o.exempt && o.paid>0) s.weeklyData[wk].revenue=Math.max(0,(s.weeklyData[wk].revenue||0)-o.paid);
-        }
-        items.forEach(it=>{ const qty=o.items[it.id]||0; if(!qty)return; s.makeList[it.id]=Math.max(0,(s.makeList[it.id]||0)-qty); if(s.makeList[it.id]<=0)delete s.makeList[it.id]; });
+        items.forEach(it=>{ const qty=o.items[it.id]||0; if(!qty)return; const inMk=s.makeList[it.id]||0; const restore=Math.min(qty,inMk); if(restore>0){s.makeList[it.id]=inMk-restore; if(s.makeList[it.id]<=0)delete s.makeList[it.id];}else{s.stock[it.id]=(s.stock[it.id]||0)+qty;} });
         return s;
       });
       toast2("Order deleted");
@@ -350,15 +312,9 @@ export default function App() {
       const o=s.orders.find(x=>x.id===editOrd.id); if(!o)return s;
       items.forEach(it=>{
         const diff=(eq[it.id]||0)-(o.items[it.id]||0);
-        if(diff>0){ s.makeList[it.id]=(s.makeList[it.id]||0)+diff; }
-        else if(diff<0){ s.makeList[it.id]=Math.max(0,(s.makeList[it.id]||0)+diff); if(s.makeList[it.id]<=0)delete s.makeList[it.id]; }
+        if(diff>0){const avail=Math.max(0,s.stock[it.id]||0);const extra=Math.max(0,diff-avail);if(extra>0)s.makeList[it.id]=(s.makeList[it.id]||0)+extra;}
+        else if(diff<0){const red=Math.abs(diff);const inMk=s.makeList[it.id]||0;s.makeList[it.id]=Math.max(0,inMk-Math.min(red,inMk));if(s.makeList[it.id]<=0)delete s.makeList[it.id];}
       });
-      // Adjust revenue if paid status changed
-      const wk=s.currentWeekKey;
-      if(!s.weeklyData[wk])s.weeklyData[wk]={sold:{},revenue:0,charityDonated:0};
-      const prevPaid = o.exempt?0:Math.min(o.paid,o.total);
-      const newPaidAmt = eex?0:(pf?t:p);
-      s.weeklyData[wk].revenue = Math.max(0,(s.weeklyData[wk].revenue||0) - prevPaid + newPaidAmt);
       o.customer=editOrd.customer; o.items={...eq}; o.total=t; o.paid=eex?0:(pf?t:p); o.paidFull=pf; o.exempt=eex;
       return s;
     });
@@ -368,7 +324,7 @@ export default function App() {
   // ── Bake / Stock actions ──────────────────────────────────────────────────
   const markMade = id => {
     const needed=st.makeList[id]||0; const val=parseInt(mi[id]||""); const making=isNaN(val)||val<=0?needed:Math.min(val,needed); const rem=needed-making;
-    upd(s=>{if(rem<=0){delete s.makeList[id];}else{s.makeList[id]=rem;}return s;});
+    upd(s=>{if(rem<=0){delete s.makeList[id];s.stock[id]=0;}else{s.makeList[id]=rem;s.stock[id]=-rem;}return s;});
     setMi(p=>{const n={...p};delete n[id];return n;});
     toast2(rem>0?`Made ${making}, ${rem} still needed`:"All made ✓","success");
   };
@@ -404,10 +360,16 @@ export default function App() {
   const startNewWeek = () => setConfirm({ title:"🗓 Start New Week?", confirmColor:C.charity, confirmLabel:"Start New Week", msg:"Clears paid & picked-up orders. Unpaid orders carry over. Stock & make list stay.", onConfirm:()=>{
     upd(s=>{
       s.orders=s.orders.filter(o=>!(o.exempt||o.paidFull||o.paid>=o.total)||!o.pickedUp);
-      const prev=s.weeklyData[s.currentWeekKey]||{};
-      const owed=Math.max(0,(prev.revenue||0)*0.1-(prev.charityDonated||0));
+      // Calculate charity owed for the closing week from orders directly
+      const closingKey = s.currentWeekKey;
+      const closingStart = new Date(closingKey+"T00:00:00");
+      const closingEnd   = new Date(closingStart); closingEnd.setDate(closingStart.getDate()+7);
+      const closingOrders = s.orders.filter(o=>{ const t=new Date(o.ts); return t>=closingStart&&t<closingEnd; });
+      const closingRev = closingOrders.reduce((sum,o)=>o.exempt?sum:sum+Math.min(o.paid||0,o.total||0),0);
+      const closingWd  = s.weeklyData[closingKey]||{};
+      const owed = Math.max(0, closingRev*0.1 - (closingWd.charityDonated||0));
       s.currentWeekKey=getWeekKey();
-      if(!s.weeklyData[s.currentWeekKey])s.weeklyData[s.currentWeekKey]={sold:{},revenue:0,charityDonated:0};
+      if(!s.weeklyData[s.currentWeekKey])s.weeklyData[s.currentWeekKey]={charityDonated:0};
       if(owed>0)s.weeklyData[s.currentWeekKey].charityCarriedOver=(s.weeklyData[s.currentWeekKey].charityCarriedOver||0)+owed;
       return s;
     });
@@ -415,14 +377,39 @@ export default function App() {
   }});
 
   // ── Report values ─────────────────────────────────────────────────────────
-  const wd      = st.weeklyData[vw]||{sold:{},revenue:0,charityDonated:0};
-  const rev     = wd.revenue||0;
-  // All unpaid balance across ALL orders (picked up or not)
-  const amtOwed = st.orders.filter(o=>!o.exempt&&!(o.paidFull||o.paid>=o.total)).reduce((s,o)=>s+(o.total-(o.paid||0)),0);
-  // Charity = 10% of ALL billed (paid + outstanding)
+  const wd = st.weeklyData[vw]||{charityDonated:0};
+
+  // Get the Sunday→Saturday date range for the viewed week
+  const vwStart = new Date(vw+"T00:00:00");
+  const vwEnd   = new Date(vwStart); vwEnd.setDate(vwStart.getDate()+7);
+
+  // All orders that belong to the viewed week (by timestamp)
+  const weekOrders = st.orders.filter(o => {
+    const t = new Date(o.ts);
+    return t >= vwStart && t < vwEnd;
+  });
+
+  // Sold counts per item — live from orders, deletions auto-disappear
+  const soldCounts = {};
+  weekOrders.forEach(o => {
+    Object.entries(o.items||{}).forEach(([id,qty]) => {
+      soldCounts[id] = (soldCounts[id]||0) + qty;
+    });
+  });
+
+  // Paid revenue — sum of what was actually paid on week's orders
+  const rev = weekOrders.reduce((s,o) => {
+    if (o.exempt) return s;
+    return s + Math.min(o.paid||0, o.total||0);
+  }, 0);
+
+  // Outstanding balance — unpaid portion of week's orders
+  const amtOwed = weekOrders.filter(o=>!o.exempt&&!(o.paidFull||o.paid>=o.total)).reduce((s,o)=>s+(o.total-(o.paid||0)),0);
+
+  // Charity = 10% of all billed (paid + outstanding) for viewed week
   const totalBilled = rev + amtOwed;
-  const ctw   = totalBilled*0.1; const co=wd.charityCarriedOver||0; const ct=ctw+co;
-  const cd    = wd.charityDonated||0; const cow=Math.max(0,ct-cd);
+  const ctw = totalBilled*0.1; const co=wd.charityCarriedOver||0; const ct=ctw+co;
+  const cd  = wd.charityDonated||0; const cow=Math.max(0,ct-cd);
   const logDon  = () => {
     const amt=parseFloat(don)||0; if(amt<=0){toast2("Enter a donation amount","error");return;}
     upd(s=>{if(!s.weeklyData[vw])s.weeklyData[vw]={sold:{},revenue:0,charityDonated:0};s.weeklyData[vw].charityDonated=(s.weeklyData[vw].charityDonated||0)+amt;return s;});
@@ -502,11 +489,13 @@ export default function App() {
                   <div key={cat}>
                     <div style={{fontFamily:"Georgia,serif",fontSize:"0.95rem",color:C.brown,fontWeight:700,borderBottom:`2px solid ${C.soft}`,paddingBottom:6,marginBottom:10,letterSpacing:1}}>{icon} {cat}</div>
                     <div style={g2}>{catItems.map(it=>{
-                      const qty=fq[it.id]||0;
+                      const qty=fq[it.id]||0; const stk=Math.max(0,st.stock[it.id]||0); const ov=qty>stk;
                       return (
-                        <div key={it.id} style={{background:C.cream,border:`1.5px solid ${C.soft}`,borderRadius:10,padding:"12px 14px"}}>
+                        <div key={it.id} style={{background:ov?"#fff8f0":C.cream,border:`1.5px solid ${ov?C.orange:C.soft}`,borderRadius:10,padding:"12px 14px"}}>
                           <div style={{fontWeight:700,fontSize:"0.85rem",color:C.brown,textTransform:"uppercase",letterSpacing:1}}>{it.name}</div>
                           <div style={{fontSize:"0.75rem",color:"#aaa"}}>${parseFloat(it.price).toFixed(2)}{it.description&&<span style={{marginLeft:5,color:"#bbb"}}>· {it.description}</span>}</div>
+                          <div style={{fontSize:"0.75rem",fontWeight:700,color:stk===0?C.red:stk<=3?C.orange:C.green,marginBottom:6}}>In stock: {stk}</div>
+                          {ov&&<div style={{fontSize:"0.7rem",color:C.orange,fontWeight:700,marginBottom:4}}>⚠ Exceeds stock</div>}
                           <QC value={qty} onChange={v=>setFq(p=>({...p,[it.id]:Math.max(0,v)}))} />
                         </div>
                       );
@@ -607,12 +596,7 @@ export default function App() {
                           {it.description&&<div style={{fontSize:"0.72rem",color:"#aaa"}}>{it.description}</div>}
                           <div style={{fontSize:"0.72rem",color:"#aaa"}}>needed</div>
                         </div>
-                        {/* Manual +/- adjustment */}
-                        <div style={{display:"flex",alignItems:"center",gap:6}}>
-                          <button style={qb} onClick={()=>upd(s=>{s.makeList[id]=Math.max(0,(s.makeList[id]||0)-1);if(s.makeList[id]<=0)delete s.makeList[id];return s;})}>−</button>
-                          <span style={{fontFamily:"Georgia,serif",fontSize:"2.2rem",fontWeight:900,color:C.orange,minWidth:42,textAlign:"center"}}>{qty}</span>
-                          <button style={qb} onClick={()=>upd(s=>{s.makeList[id]=(s.makeList[id]||0)+1;return s;})}>+</button>
-                        </div>
+                        <div style={{fontFamily:"Georgia,serif",fontSize:"2.2rem",fontWeight:900,color:C.orange,minWidth:42,textAlign:"center"}}>{qty}</div>
                         <div style={{display:"flex",flexDirection:"column",alignItems:"center",gap:4}}>
                           <input type="number" min="1" max={qty} placeholder="qty" value={mi[id]||""} onChange={e=>setMi(p=>({...p,[id]:e.target.value}))} style={{width:60,padding:"5px 8px",border:`1.5px solid ${C.soft}`,borderRadius:6,fontSize:"0.9rem",textAlign:"center",background:"white"}} />
                           <div style={{fontSize:"0.65rem",color:"#aaa"}}>made</div>
@@ -756,9 +740,9 @@ export default function App() {
                   <div style={g2}>{catItems.map(it=>(
                     <div key={it.id} style={{background:C.cream,border:`1.5px solid ${C.soft}`,borderRadius:10,padding:"13px 15px"}}>
                       <div style={{fontWeight:700,fontSize:"0.82rem",color:C.brown,textTransform:"uppercase",letterSpacing:1}}>{it.name}</div>
-                      <div style={{fontFamily:"Georgia,serif",fontSize:"1.8rem",fontWeight:900,color:C.gold}}>{wd.sold?.[it.id]||0}</div>
+                      <div style={{fontFamily:"Georgia,serif",fontSize:"1.8rem",fontWeight:900,color:C.gold}}>{soldCounts[it.id]||0}</div>
                       <div style={{fontSize:"0.75rem",color:"#888"}}>sold this week</div>
-                      <div style={{fontSize:"0.75rem",color:C.green,marginTop:2}}>${((wd.sold?.[it.id]||0)*parseFloat(it.price)).toFixed(2)}</div>
+                      <div style={{fontSize:"0.75rem",color:C.green,marginTop:2}}>${((soldCounts[it.id]||0)*parseFloat(it.price)).toFixed(2)}</div>
                     </div>
                   ))}</div>
                 </div>
