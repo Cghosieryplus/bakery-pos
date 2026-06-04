@@ -62,7 +62,7 @@ function Modal({title,msg,onConfirm,onCancel,confirmLabel="Confirm",confirmColor
 function QC({value,onChange,min=0}){return <div style={row({gap:8})}><button style={qb} onClick={()=>onChange(Math.max(min,value-1))}>−</button><span style={{fontFamily:"Georgia,serif",fontSize:"1.3rem",fontWeight:900,minWidth:28,textAlign:"center",color:C.brown}}>{value}</span><button style={qb} onClick={()=>onChange(value+1)}>+</button></div>;}
 
 // ── Default state ─────────────────────────────────────────────────────────────
-const DEF = { stock:{}, orders:[], makeList:{}, weeklyData:{}, currentWeekKey: getWeekKey(), availability:{} };
+const DEF = { stock:{}, orders:[], makeList:{}, weeklyData:{}, currentWeekKey: getWeekKey() };
 
 // ── Add Item Form (inside Stock tab) ─────────────────────────────────────────
 function AddItemForm({ onAdded }) {
@@ -210,7 +210,7 @@ export default function App() {
   }, []);
 
   const upd = useCallback(fn => setSt(p => {
-    const n = fn({ ...p, stock:{...p.stock}, orders:[...p.orders], makeList:{...p.makeList}, weeklyData:{...p.weeklyData}, availability:{...(p.availability||{})} });
+    const n = fn({ ...p, stock:{...p.stock}, orders:[...p.orders], makeList:{...p.makeList}, weeklyData:{...p.weeklyData} });
     scheduleSave(n);
     return n;
   }), [scheduleSave]);
@@ -244,11 +244,7 @@ export default function App() {
       const qtys = { ...fq };
       items.forEach(it => {
         const want = qtys[it.id]||0; if (!want) return;
-        const inStock = Math.max(0, s.stock[it.id]||0);
-        const fromStock = Math.min(want, inStock);
-        const stillNeeded = want - fromStock;
-        s.stock[it.id] = inStock - fromStock;
-        if (stillNeeded > 0) s.makeList[it.id] = (s.makeList[it.id]||0) + stillNeeded;
+        s.makeList[it.id] = (s.makeList[it.id]||0) + want;
       });
       const ap  = exempt ? 0 : (paidFull ? ot : parseFloat(amtPaid)||0);
       const ipf = !exempt && (paidFull || ap >= ot);
@@ -280,7 +276,26 @@ export default function App() {
 
   // ── Mark Picked Up ────────────────────────────────────────────────────────
   const markPickedUp = id => {
-    upd(s => { const o=s.orders.find(x=>x.id===id); if(o) o.pickedUp=!o.pickedUp; return s; });
+    upd(s => {
+      const o = s.orders.find(x=>x.id===id); if (!o) return s;
+      const pickingUp = !o.pickedUp;
+      o.pickedUp = pickingUp;
+      if (pickingUp) {
+        // Order left — remove from make list
+        items.forEach(it => {
+          const qty = o.items[it.id]||0; if (!qty) return;
+          s.makeList[it.id] = Math.max(0, (s.makeList[it.id]||0) - qty);
+          if (s.makeList[it.id] <= 0) delete s.makeList[it.id];
+        });
+      } else {
+        // Undo pickup — add back to make list
+        items.forEach(it => {
+          const qty = o.items[it.id]||0; if (!qty) return;
+          s.makeList[it.id] = (s.makeList[it.id]||0) + qty;
+        });
+      }
+      return s;
+    });
   };
 
   // ── Picked Up & Paid ─────────────────────────────────────────────────────
@@ -292,6 +307,12 @@ export default function App() {
       const wk = s.currentWeekKey;
       if (!s.weeklyData[wk]) s.weeklyData[wk]={sold:{},revenue:0,charityDonated:0};
       s.weeklyData[wk].revenue += o.total - prev;
+      // Order left — remove from make list
+      items.forEach(it => {
+        const qty = o.items[it.id]||0; if (!qty) return;
+        s.makeList[it.id] = Math.max(0, (s.makeList[it.id]||0) - qty);
+        if (s.makeList[it.id] <= 0) delete s.makeList[it.id];
+      });
       return s;
     });
     toast2("Picked up & paid ✓","success");
@@ -309,7 +330,7 @@ export default function App() {
           if (!o.exempt && (o.paidFull||o.paid>=o.total)) s.weeklyData[wk].revenue=Math.max(0,(s.weeklyData[wk].revenue||0)-o.total);
           else if (!o.exempt && o.paid>0) s.weeklyData[wk].revenue=Math.max(0,(s.weeklyData[wk].revenue||0)-o.paid);
         }
-        items.forEach(it=>{ const qty=o.items[it.id]||0; if(!qty)return; const inMk=s.makeList[it.id]||0; const fromMk=Math.min(qty,inMk); s.makeList[it.id]=Math.max(0,inMk-fromMk); if(s.makeList[it.id]<=0)delete s.makeList[it.id]; const fromStock=qty-fromMk; s.stock[it.id]=Math.max(0,(s.stock[it.id]||0)+fromStock); });
+        items.forEach(it=>{ const qty=o.items[it.id]||0; if(!qty)return; s.makeList[it.id]=Math.max(0,(s.makeList[it.id]||0)-qty); if(s.makeList[it.id]<=0)delete s.makeList[it.id]; });
         return s;
       });
       toast2("Order deleted");
@@ -329,22 +350,8 @@ export default function App() {
       const o=s.orders.find(x=>x.id===editOrd.id); if(!o)return s;
       items.forEach(it=>{
         const diff=(eq[it.id]||0)-(o.items[it.id]||0);
-        if(diff>0){
-          // Ordered more: use stock first, rest goes to makeList
-          const inStock=Math.max(0,s.stock[it.id]||0);
-          const fromStock=Math.min(diff,inStock);
-          s.stock[it.id]=inStock-fromStock;
-          const stillNeeded=diff-fromStock;
-          if(stillNeeded>0)s.makeList[it.id]=(s.makeList[it.id]||0)+stillNeeded;
-        } else if(diff<0){
-          // Ordered less: reduce makeList first, then return to stock
-          const red=Math.abs(diff);
-          const inMk=s.makeList[it.id]||0;
-          const fromMk=Math.min(red,inMk);
-          s.makeList[it.id]=Math.max(0,inMk-fromMk);
-          if(s.makeList[it.id]<=0)delete s.makeList[it.id];
-          s.stock[it.id]=Math.max(0,(s.stock[it.id]||0)+(red-fromMk));
-        }
+        if(diff>0){ s.makeList[it.id]=(s.makeList[it.id]||0)+diff; }
+        else if(diff<0){ s.makeList[it.id]=Math.max(0,(s.makeList[it.id]||0)+diff); if(s.makeList[it.id]<=0)delete s.makeList[it.id]; }
       });
       // Adjust revenue if paid status changed
       const wk=s.currentWeekKey;
@@ -361,7 +368,7 @@ export default function App() {
   // ── Bake / Stock actions ──────────────────────────────────────────────────
   const markMade = id => {
     const needed=st.makeList[id]||0; const val=parseInt(mi[id]||""); const making=isNaN(val)||val<=0?needed:Math.min(val,needed); const rem=needed-making;
-    upd(s=>{if(rem<=0){delete s.makeList[id];s.stock[id]=Math.max(0,s.stock[id]||0);}else{s.makeList[id]=rem;}return s;});
+    upd(s=>{if(rem<=0){delete s.makeList[id];}else{s.makeList[id]=rem;}return s;});
     setMi(p=>{const n={...p};delete n[id];return n;});
     toast2(rem>0?`Made ${making}, ${rem} still needed`:"All made ✓","success");
   };
@@ -370,14 +377,6 @@ export default function App() {
     upd(s=>{s.stock[id]=val;return s;}); setSInp(p=>{const n={...p};delete n[id];return n;}); toast2("Stock updated ✓","success");
   };
   const adjStock = (id,d) => { upd(s=>{s.stock[id]=Math.max(0,(s.stock[id]||0)+d);return s;}); };
-
-  const toggleAvailability = (id) => {
-    upd(s=>{
-      const cur = s.availability[id] !== false; // default true
-      s.availability[id] = !cur;
-      return s;
-    });
-  };
 
   const deleteItem = (it) => {
     setConfirm({
@@ -503,13 +502,11 @@ export default function App() {
                   <div key={cat}>
                     <div style={{fontFamily:"Georgia,serif",fontSize:"0.95rem",color:C.brown,fontWeight:700,borderBottom:`2px solid ${C.soft}`,paddingBottom:6,marginBottom:10,letterSpacing:1}}>{icon} {cat}</div>
                     <div style={g2}>{catItems.map(it=>{
-                      const qty=fq[it.id]||0; const stk=Math.max(0,st.stock[it.id]||0); const ov=qty>stk;
+                      const qty=fq[it.id]||0;
                       return (
-                        <div key={it.id} style={{background:ov?"#fff8f0":C.cream,border:`1.5px solid ${ov?C.orange:C.soft}`,borderRadius:10,padding:"12px 14px"}}>
+                        <div key={it.id} style={{background:C.cream,border:`1.5px solid ${C.soft}`,borderRadius:10,padding:"12px 14px"}}>
                           <div style={{fontWeight:700,fontSize:"0.85rem",color:C.brown,textTransform:"uppercase",letterSpacing:1}}>{it.name}</div>
                           <div style={{fontSize:"0.75rem",color:"#aaa"}}>${parseFloat(it.price).toFixed(2)}{it.description&&<span style={{marginLeft:5,color:"#bbb"}}>· {it.description}</span>}</div>
-                          <div style={{fontSize:"0.75rem",fontWeight:700,color:stk===0?C.red:stk<=3?C.orange:C.green,marginBottom:6}}>In stock: {stk}</div>
-                          {ov&&<div style={{fontSize:"0.7rem",color:C.orange,fontWeight:700,marginBottom:4}}>⚠ Exceeds stock</div>}
                           <QC value={qty} onChange={v=>setFq(p=>({...p,[it.id]:Math.max(0,v)}))} />
                         </div>
                       );
@@ -610,7 +607,12 @@ export default function App() {
                           {it.description&&<div style={{fontSize:"0.72rem",color:"#aaa"}}>{it.description}</div>}
                           <div style={{fontSize:"0.72rem",color:"#aaa"}}>needed</div>
                         </div>
-                        <div style={{fontFamily:"Georgia,serif",fontSize:"2.2rem",fontWeight:900,color:C.orange,minWidth:42,textAlign:"center"}}>{qty}</div>
+                        {/* Manual +/- adjustment */}
+                        <div style={{display:"flex",alignItems:"center",gap:6}}>
+                          <button style={qb} onClick={()=>upd(s=>{s.makeList[id]=Math.max(0,(s.makeList[id]||0)-1);if(s.makeList[id]<=0)delete s.makeList[id];return s;})}>−</button>
+                          <span style={{fontFamily:"Georgia,serif",fontSize:"2.2rem",fontWeight:900,color:C.orange,minWidth:42,textAlign:"center"}}>{qty}</span>
+                          <button style={qb} onClick={()=>upd(s=>{s.makeList[id]=(s.makeList[id]||0)+1;return s;})}>+</button>
+                        </div>
                         <div style={{display:"flex",flexDirection:"column",alignItems:"center",gap:4}}>
                           <input type="number" min="1" max={qty} placeholder="qty" value={mi[id]||""} onChange={e=>setMi(p=>({...p,[id]:e.target.value}))} style={{width:60,padding:"5px 8px",border:`1.5px solid ${C.soft}`,borderRadius:6,fontSize:"0.9rem",textAlign:"center",background:"white"}} />
                           <div style={{fontSize:"0.65rem",color:"#aaa"}}>made</div>
@@ -669,7 +671,6 @@ export default function App() {
                       {catItems.map(it => {
                         const qty     = Math.max(0, st.stock[it.id]||0);
                         const toMake  = Math.max(0, st.makeList[it.id]||0);
-                        const isAvail = st.availability?.[it.id] !== false; // default true
                         const stockColor = qty===0?C.red:qty<=3?C.orange:C.green;
                         return (
                           <div key={it.id} style={{background:C.cream,border:`1.5px solid ${C.soft}`,borderRadius:10,padding:"13px 15px",...col({gap:8})}}>
@@ -680,27 +681,6 @@ export default function App() {
                                 {it.description&&<div style={{fontSize:"0.72rem",color:"#bbb"}}>{it.description}</div>}
                               </div>
                               <div style={{display:"flex",alignItems:"center",gap:8}}>
-                                {/* Availability toggle */}
-                                <div style={{display:"flex",alignItems:"center",gap:5}}>
-                                  <span style={{fontSize:"0.65rem",fontWeight:700,color:isAvail?C.green:C.red,textTransform:"uppercase",letterSpacing:0.5,minWidth:50,textAlign:"right"}}>{isAvail?"On Sale":"Off Sale"}</span>
-                                  <div
-                                    onClick={()=>toggleAvailability(it.id)}
-                                    title={isAvail?"Click to hide from storefront":"Click to show on storefront"}
-                                    style={{
-                                      width:44,height:24,borderRadius:12,cursor:"pointer",
-                                      background:isAvail?C.green:"#ccc",
-                                      position:"relative",transition:"background .2s",flexShrink:0,
-                                      border:`2px solid ${isAvail?C.green:"#bbb"}`,
-                                    }}
-                                  >
-                                    <div style={{
-                                      position:"absolute",top:2,left:isAvail?20:2,
-                                      width:16,height:16,borderRadius:"50%",
-                                      background:"white",transition:"left .2s",
-                                      boxShadow:"0 1px 3px rgba(0,0,0,.3)",
-                                    }}/>
-                                  </div>
-                                </div>
                                 <div style={{fontFamily:"Georgia,serif",fontSize:"0.85rem",color:"#888"}}>${parseFloat(it.price).toFixed(2)}</div>
                                 <button onClick={()=>deleteItem(it)} title="Delete item" style={{width:26,height:26,borderRadius:"50%",border:`1.5px solid ${C.red}`,background:"transparent",color:C.red,fontSize:"0.8rem",cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",opacity:0.7,flexShrink:0}}>🗑</button>
                               </div>

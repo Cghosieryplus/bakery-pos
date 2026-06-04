@@ -10,9 +10,8 @@ const btn = (bg, color, x={}) => ({ padding:"11px 18px", background:bg, color, b
 const inp = (x={}) => ({ padding:"11px 13px", border:`1.5px solid ${C.soft}`, borderRadius:9, fontSize:"1rem", background:"white", color:C.dark, width:"100%", boxSizing:"border-box", fontFamily:"inherit", ...x });
 
 // ── Order window logic ────────────────────────────────────────────────────────
-// Pre-order window: Sunday 12:00am → Wednesday 6:00pm EST
-// After Wednesday 6pm: only items with stock > 0 can be ordered
-// Friday & Saturday: fully closed (no pre-orders, stock-only)
+// Pre-order window: Sunday 12:00am → Thursday 6:00pm EST
+// After Thursday 6pm: only items with stock > 0 can be ordered
 //
 // Returns: { preOrderOpen: bool, stockOnlyMode: bool, closed: bool, nextOpenMsg: string }
 function getOrderWindowStatus() {
@@ -25,15 +24,14 @@ function getOrderWindowStatus() {
   const hour = estDate.getHours();  // 0-23
   const min  = estDate.getMinutes();
 
-  // Pre-order open: Sun(0) through Wed(3) before 6pm, or Wed exactly at 18:00
-  const beforeWednesday6pm = day < 3 || (day === 3 && hour < 18);
-  const isAfterCutoff = day > 3 || (day === 3 && hour >= 18);
+  // Pre-order open: Sun(0) through Thu(4) before 6pm
+  const beforeThursday6pm = day < 4 || (day === 4 && hour < 18);
+  const isAfterCutoff = day > 4 || (day === 4 && hour >= 18);
 
-  if (beforeWednesday6pm) {
+  if (beforeThursday6pm) {
     return { preOrderOpen: true, stockOnlyMode: false, closed: false, nextOpenMsg: "" };
   }
   if (isAfterCutoff) {
-    // Stock-only mode: can still order if stock > 0, no pre-orders
     return { preOrderOpen: false, stockOnlyMode: true, closed: false, nextOpenMsg: "Pre-orders reopen Sunday" };
   }
   // Shouldn't reach here, but default safe
@@ -59,7 +57,6 @@ function QC({ value, max, onChange }) {
 export default function Order() {
   const [menuItems, setMenuItems] = useState([]);
   const [stockMap, setStockMap]   = useState({});
-  const [availabilityMap, setAvailabilityMap] = useState({});
   const [qtys, setQtys]           = useState({});
   const [firstName, setFirstName] = useState("");
   const [lastName, setLastName]   = useState("");
@@ -89,21 +86,17 @@ export default function Order() {
         .single();
 
       const stock = stateRow?.data?.stock || {};
-      const availability = stateRow?.data?.availability || {};
 
       if (itemData) {
         setMenuItems(itemData);
         const q = {};
         const sm = {};
-        const am = {};
         itemData.forEach(it => {
           q[it.id] = 0;
           sm[it.id] = Math.max(0, stock[it.id] || 0);
-          am[it.id] = availability[it.id] !== false; // default true
         });
         setQtys(q);
         setStockMap(sm);
-        setAvailabilityMap(am);
 
         itemData.forEach(async it => {
           if (it.image_path) {
@@ -147,11 +140,7 @@ export default function Order() {
 
     menuItems.forEach(it => {
       const want = qtys[it.id] || 0; if (!want) return;
-      const inStock = Math.max(0, stock[it.id] || 0);
-      const fromStock = Math.min(want, inStock);
-      stock[it.id] = inStock - fromStock;
-      const stillNeeded = want - fromStock;
-      if (stillNeeded > 0) makeList[it.id] = (makeList[it.id] || 0) + stillNeeded;
+      makeList[it.id] = (makeList[it.id] || 0) + want;
     });
 
     const order = {
@@ -337,11 +326,9 @@ export default function Order() {
                 {catItems.map(it => {
                   const available  = stockMap[it.id] || 0;
                   const qty        = qtys[it.id] || 0;
-                  const isAvail    = availabilityMap[it.id] !== false; // default true
-                  // If admin toggled off: always out of stock on storefront
-                  // During pre-order window: no stock limit. After cutoff: must have stock.
-                  const canOrder   = isAvail && (orderWindow.preOrderOpen || available > 0);
-                  const maxQty     = orderWindow.preOrderOpen ? undefined : available;
+                  // During pre-order window: no stock limit. After Thursday noon: must have stock.
+                  const canOrder   = orderWindow.preOrderOpen || available > 0;
+                  const maxQty     = orderWindow.preOrderOpen ? undefined : available; // undefined = no cap
                   const soldOut    = !canOrder;
 
                   return (
